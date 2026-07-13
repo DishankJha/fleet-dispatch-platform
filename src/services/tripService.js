@@ -1,22 +1,30 @@
 import AppError from "../errors/AppError.js";
 
 import {
-    createTrip,
+    createTripTransaction,
     getTripsByOrganization,
     findTripById,
     updateTrip,
+    completeTripTransaction,
+    cancelTripTransaction,
 } from "../repositories/tripRepository.js";
 
 import {
-    findAvailableDriver,
-    updateDriverStatus,
     findUserById,
 } from "../repositories/userRepository.js";
 
 import {
     findAvailableVehicle,
-    updateVehicleStatus,
 } from "../repositories/vehicleRepository.js";
+
+import {
+    getRandomAvailableDriver,
+    removeAvailableDriver,
+    addAvailableDriver,
+} from "../cache/driverCache.js";
+
+import { getIO } from "../socket/socket.js";
+import { getDriverSocket } from "../socket/driverSocket.js";
 
 export async function createTripService(data, userId) {
     const admin = await findUserById(userId);
@@ -32,12 +40,22 @@ export async function createTripService(data, userId) {
         );
     }
 
-    const driver = await findAvailableDriver(admin.organizationId);
+    // Get available driver from Redis
+    const driverId = await getRandomAvailableDriver();
 
-    if (!driver) {
+    if (!driverId) {
         throw new AppError(
             "No available drivers found",
             400
+        );
+    }
+
+    const driver = await findUserById(driverId);
+
+    if (!driver) {
+        throw new AppError(
+            "Driver not found",
+            404
         );
     }
 
@@ -50,23 +68,38 @@ export async function createTripService(data, userId) {
         );
     }
 
-    const trip = await createTrip({
-        pickupLocation: data.pickupLocation,
-        dropLocation: data.dropLocation,
-        distance: data.distance,
-        fare: data.fare,
-
-        organizationId: admin.organizationId,
-
+    const trip = await createTripTransaction({
+        tripData: {
+            pickupLocation: data.pickupLocation,
+            dropLocation: data.dropLocation,
+            distance: data.distance,
+            fare: data.fare,
+            organizationId: admin.organizationId,
+            driverId: driver.id,
+            vehicleId: vehicle.id,
+            status: "ASSIGNED",
+        },
         driverId: driver.id,
         vehicleId: vehicle.id,
-
-        status: "ASSIGNED",
     });
 
-    await updateDriverStatus(driver.id, "ON_TRIP");
+    // Remove driver from Redis available pool
+    await removeAvailableDriver(driver.id);
 
-    await updateVehicleStatus(vehicle.id, "IN_SERVICE");
+    // Notify driver if online
+    const io = getIO();
+    const socketId = getDriverSocket(driver.id);
+
+    if (socketId) {
+        io.to(socketId).emit("trip:assigned", {
+            message: "New trip assigned",
+            trip,
+        });
+
+        console.log(`📢 Trip sent to Driver ${driver.id}`);
+    } else {
+        console.log(`⚠ Driver ${driver.id} is offline`);
+    }
 
     return trip;
 }
@@ -78,9 +111,7 @@ export async function getTripsService(userId) {
         throw new AppError("User not found", 404);
     }
 
-    return await getTripsByOrganization(
-        admin.organizationId
-    );
+    return await getTripsByOrganization(admin.organizationId);
 }
 
 export async function startTripService(tripId) {
@@ -116,19 +147,14 @@ export async function completeTripService(tripId) {
         );
     }
 
-    await updateDriverStatus(
-        trip.driverId,
-        "AVAILABLE"
-    );
+    const completedTrip = await completeTripTransaction(tripId);
 
-    await updateVehicleStatus(
-        trip.vehicleId,
-        "AVAILABLE"
-    );
+    // Add driver back to Redis pool
+    if (trip.driverId) {
+        await addAvailableDriver(trip.driverId);
+    }
 
-    return await updateTrip(tripId, {
-        status: "COMPLETED",
-    });
+    return completedTrip;
 }
 
 export async function cancelTripService(tripId) {
@@ -138,21 +164,12 @@ export async function cancelTripService(tripId) {
         throw new AppError("Trip not found", 404);
     }
 
+    const cancelledTrip = await cancelTripTransaction(tripId);
+
+    // Add driver back to Redis pool
     if (trip.driverId) {
-        await updateDriverStatus(
-            trip.driverId,
-            "AVAILABLE"
-        );
+        await addAvailableDriver(trip.driverId);
     }
 
-    if (trip.vehicleId) {
-        await updateVehicleStatus(
-            trip.vehicleId,
-            "AVAILABLE"
-        );
-    }
-
-    return await updateTrip(tripId, {
-        status: "CANCELLED",
-    });
+    return cancelledTrip;
 }

@@ -9,6 +9,11 @@ import {
 
 import { findFleetById } from "../repositories/vehicleRepository.js";
 
+import {
+    addAvailableDriver,
+    removeAvailableDriver,
+} from "../cache/driverCache.js";
+
 export async function getDrivers(userId) {
     const admin = await findUserById(userId);
 
@@ -32,6 +37,10 @@ export async function getAvailableDrivers(userId) {
 export async function assignFleet(driverId, fleetId, adminId) {
     const admin = await findUserById(adminId);
 
+    if (!admin) {
+        throw new AppError("Admin not found", 404);
+    }
+
     const driver = await findUserById(driverId);
 
     if (!driver) {
@@ -51,5 +60,13 @@ export async function assignFleet(driverId, fleetId, adminId) {
         );
     }
 
-    return await assignDriverToFleet(driverId, fleetId);
+    const updatedDriver = await assignDriverToFleet(driverId, fleetId);
+
+    await addAvailableDriver(driverId);
+
+    return updatedDriver;
+}
+
+export async function removeDriverFromAvailability(driverId) {
+    await removeAvailableDriver(driverId);
 }
