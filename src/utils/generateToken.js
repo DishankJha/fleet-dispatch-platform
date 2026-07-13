@@ -1,0 +1,16 @@
+import jwt from "jsonwebtoken";
+import { JWT_EXPIRES_IN } from "./constants.js";
+
+export function generateAccessToken(user) {
+    return jwt.sign(
+        {
+            id: user.id,
+            email: user.email,
+            role: user.role,
+        },
+        process.env.JWT_SECRET,
+        {
+            expiresIn: JWT_EXPIRES_IN,
+        }
+    );
+}

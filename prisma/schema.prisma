@@ -1,13 +1,125 @@
-// This is your Prisma schema file,
-// learn more about it in the docs: https://pris.ly/d/prisma-schema
-
-// Get a free hosted Postgres database in seconds: `npx create-db`
-
 generator client {
-  provider = "prisma-client"
-  output   = "../src/generated/prisma"
+  provider = "prisma-client-js"
 }
 
 datasource db {
   provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum Role {
+  ADMIN
+  DRIVER
+  DISPATCHER
+}
+
+enum VehicleStatus {
+  AVAILABLE
+  IN_SERVICE
+  MAINTENANCE
+}
+
+enum DriverStatus {
+  AVAILABLE
+  ON_TRIP
+  OFFLINE
+}
+
+enum TripStatus {
+  REQUESTED
+  ASSIGNED
+  IN_PROGRESS
+  COMPLETED
+  CANCELLED
+}
+
+model Organization {
+  id          String  @id @default(uuid())
+  name        String
+  description String?
+
+  users  User[]
+  fleets Fleet[]
+  trips  Trip[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+model Fleet {
+  id          String  @id @default(uuid())
+  name        String
+  description String?
+
+  organizationId String
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  vehicles Vehicle[]
+  drivers  User[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+model Vehicle {
+  id String @id @default(uuid())
+
+  registrationNumber String @unique
+  model              String
+  capacity           Int
+
+  status VehicleStatus @default(AVAILABLE)
+
+  fleetId String
+  fleet   Fleet  @relation(fields: [fleetId], references: [id], onDelete: Cascade)
+
+  trips Trip[] @relation("VehicleTrips")
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+model User {
+  id           String @id @default(uuid())
+  name         String
+  email        String @unique
+  passwordHash String
+  role         Role
+
+  organizationId String?
+  organization   Organization? @relation(fields: [organizationId], references: [id], onDelete: SetNull)
+
+  fleetId String?
+  fleet   Fleet?  @relation(fields: [fleetId], references: [id], onDelete: SetNull)
+
+  status DriverStatus @default(AVAILABLE)
+
+  trips Trip[] @relation("DriverTrips")
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+model Trip {
+  id String @id @default(uuid())
+
+  pickupLocation String
+  dropLocation   String
+
+  distance Float
+  fare     Float
+
+  status TripStatus @default(REQUESTED)
+
+  organizationId String
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  driverId String?
+  driver   User?   @relation("DriverTrips", fields: [driverId], references: [id], onDelete: SetNull)
+
+  vehicleId String?
+  vehicle   Vehicle? @relation("VehicleTrips", fields: [vehicleId], references: [id], onDelete: SetNull)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 }
